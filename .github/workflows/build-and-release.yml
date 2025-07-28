@@ -228,32 +228,48 @@ jobs:
         name: binary-${{ matrix.name }}
         path: ${{ matrix.asset_name }}
 
-  release:
-    name: Create GitHub Release
+  upload-to-oss:
+    name: Upload to OSS
     needs: build
     runs-on: ubuntu-latest
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-    permissions:
-      contents: write
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
 
-    - name: Download all build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts/
+      - name: List artifacts for debugging
+        run: ls -R artifacts
 
-    - name: List artifacts
-      run: ls -R artifacts
+      - name: Calculate SHA256 checksums
+        run: |
+          find artifacts -type f -name "*.zip" | while read -r file; do
+            sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
+          done
 
-    - name: Create Release and Upload Assets
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        TAG_NAME="release-$(date +%Y%m%d-%H%M%S)"
-        gh release create "$TAG_NAME" \
-          --title "whisper-server binaries $TAG_NAME" \
-          --notes "Automated release of whisper-server binaries for various platforms." \
-          artifacts/*/*.zip 
+      - name: List files to be uploaded
+        run: ls -R artifacts
+
+      - name: Setup ossutil
+        uses: manyuanrong/setup-ossutil@v2.0
+        with:
+          endpoint: ${{ secrets.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+
+      - name: Upload to OSS
+        run: |
+          DATE_FOLDER=$(date +%Y%m%d)
+          OSS_PATH="oss://${{ secrets.OSS_BUCKET }}/whisper.cpp/$DATE_FOLDER/"
+          
+          echo "Uploading files to $OSS_PATH"
+          
+          find artifacts -type f \( -name "*.zip" -o -name "*.sha256" \) | while read -r file; do
+            filename=$(basename "$file")
+            echo "Uploading $filename"
+            ossutil cp -f "$file" "$OSS_PATH$filename"
+          done
+          
+          echo "Listing remote files..."
+          ossutil ls "$OSS_PATH" 
