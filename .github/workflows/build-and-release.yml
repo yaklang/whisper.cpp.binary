@@ -45,16 +45,19 @@ jobs:
       working-directory: whisper.cpp
       shell: bash
       run: |
-        CMAKE_ARGS=""
+        CMAKE_ARGS="-DWHISPER_BUILD_SHARED=OFF"
         # For Apple Silicon, enable Metal for better performance
         if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
-          CMAKE_ARGS="-DWHISPER_METAL=1"
+          CMAKE_ARGS="$CMAKE_ARGS -DWHISPER_METAL=1"
         fi
-        # For all macOS builds, make binaries relocatable
-        if [[ "${{ runner.os }}" == "macOS" ]]; then
-          CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_MACOSX_RPATH=ON -DCMAKE_INSTALL_RPATH=@executable_path"
+        # For Windows, also link the runtime statically to avoid vcruntime dependencies.
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          CMAKE_ARGS="$CMAKE_ARGS -DWHISPER_MSVC_RUNTIME=static"
         fi
+        # The RPATH settings for macOS are no longer needed for a static build.
+
         # Configure
+        echo "Using CMAKE_ARGS: $CMAKE_ARGS"
         cmake -B build $CMAKE_ARGS
         # Build
         cmake --build build --config Release -j
