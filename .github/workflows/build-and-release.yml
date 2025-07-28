@@ -50,6 +50,10 @@ jobs:
         if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
           CMAKE_ARGS="-DWHISPER_METAL=1"
         fi
+        # For all macOS builds, make binaries relocatable
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_MACOSX_RPATH=ON -DCMAKE_INSTALL_RPATH=@executable_path"
+        fi
         # Configure
         cmake -B build $CMAKE_ARGS
         # Build
@@ -83,9 +87,11 @@ jobs:
       shell: bash
       run: |
         if [[ "${{ runner.os }}" == "Windows" ]]; then
-          powershell -Command "Compress-Archive -Path '${{ matrix.binary_name }}' -DestinationPath '../${{ matrix.asset_name }}'"
+          # The glob * should handle all files like .exe and .dll
+          powershell -Command "Compress-Archive -Path * -DestinationPath '../${{ matrix.asset_name }}'"
         else
-          zip ../${{ matrix.asset_name }} ${{ matrix.binary_name }}
+          # Zip all files in the current (staging) directory
+          zip ../${{ matrix.asset_name }} *
         fi
 
     - name: Upload artifact
@@ -103,6 +109,9 @@ jobs:
       contents: write
 
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Download all build artifacts
       uses: actions/download-artifact@v4
       with:
