@@ -76,18 +76,19 @@ jobs:
       run: |
         mkdir staging
 
-        # Find the directory containing the main executable
+        # Copy the main executable
         SERVER_EXECUTABLE=$(find whisper.cpp/build -type f -name "${{ matrix.binary_name }}" | head -n 1)
         if [[ -z "$SERVER_EXECUTABLE" ]]; then
           echo "Error: Could not find server binary '${{ matrix.binary_name }}'"
           ls -R whisper.cpp/build
           exit 1
         fi
-        BINARY_DIR=$(dirname "$SERVER_EXECUTABLE")
-        
-        echo "Found binary directory at: $BINARY_DIR"
-        echo "Copying all contents from binary directory to staging... (preserving symlinks)"
-        cp -a "$BINARY_DIR"/* staging/
+        echo "Copying server executable: $SERVER_EXECUTABLE"
+        cp "$SERVER_EXECUTABLE" staging/
+
+        # Find and copy any shared libraries and their symlinks from the entire build directory
+        echo "Finding and copying shared libraries (including symlinks)..."
+        find whisper.cpp/build \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" -o -name "*.dll" \) \( -type f -o -type l \) -print -exec cp -a {} staging/ \;
 
         echo "Staging directory contents:"
         ls -lh staging
