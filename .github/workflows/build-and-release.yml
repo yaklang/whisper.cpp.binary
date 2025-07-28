@@ -91,7 +91,7 @@ jobs:
         fi
         
         # Select a sample file
-        SAMPLE_FILE="../samples/jfk.wav"
+        SAMPLE_FILE="../samples/jfk.mp3"
         if [ ! -f "$SAMPLE_FILE" ]; then
             echo "Sample file not found at $SAMPLE_FILE. Listing samples directory:"
             ls -R ../samples
