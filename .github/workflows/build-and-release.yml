@@ -50,6 +50,11 @@ jobs:
         if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
           CMAKE_ARGS="-DWHISPER_METAL=1"
         fi
+
+        # This ensures the RPATH is set correctly for both the build tree and the install destination.
+        # It makes the binaries in the build directory relocatable without needing a separate install step.
+        CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
+
         # Set RPATH so the executable can find shared libraries in its own directory
         if [[ "${{ runner.os }}" == "macOS" ]]; then
           CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_MACOSX_RPATH=ON -DCMAKE_INSTALL_RPATH=@executable_path"
@@ -158,15 +163,24 @@ jobs:
         
         # Wait for the server to be ready on port 8080
         echo "Waiting for server to start... (timeout in 60s)"
-        SECONDS=0
+        WAIT_SECONDS=0
         TIMEOUT=60
         while true; do
-            curl -s http://127.0.0.1:8080 > /dev/null
-            if [[ $? -ne 7 ]]; then
-              echo "Server is listening on port 8080."
-              break
+            # By placing curl in an `if` condition, we prevent `set -e` from exiting the script on failure.
+            if curl -s http://127.0.0.1:8080 > /dev/null; then
+                echo "Server is listening on port 8080."
+                break # Success
+            else
+                # curl failed. If the reason is not "could not connect" (7), it's a real error.
+                if [[ $? -ne 7 ]]; then
+                    echo "Server check failed with unexpected curl error $?. Aborting."
+                    kill $SERVER_PID
+                    exit 1
+                fi
+                # Exit code was 7, which is expected while waiting. Continue loop.
             fi
-            if (( SECONDS > TIMEOUT )); then
+
+            if (( WAIT_SECONDS >= TIMEOUT )); then
                 echo "Timeout: Server failed to start within $TIMEOUT seconds."
                 kill $SERVER_PID
                 exit 1
@@ -176,6 +190,7 @@ jobs:
                 exit 1
             fi
             sleep 1
+            WAIT_SECONDS=$((WAIT_SECONDS+1))
         done
 
         # Select a sample file (path is relative to verification-dir)
