@@ -55,15 +55,28 @@ jobs:
         # Build
         cmake --build build --config Release -j
 
+    - name: List build artifacts for debugging
+      if: always()
+      working-directory: whisper.cpp
+      run: |
+        echo "Listing contents of build directory:"
+        ls -R build
+
     - name: Prepare artifact
       shell: bash
       run: |
         mkdir staging
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          cp whisper.cpp/build/bin/Release/server.exe staging/${{ matrix.binary_name }}
-        else
-          cp whisper.cpp/build/bin/server staging/${{ matrix.binary_name }}
+        BINARY_PATH=$(find whisper.cpp/build -type f -name "${{ matrix.binary_name }}")
+        if [[ -z "$BINARY_PATH" ]]; then
+          echo "Error: Could not find binary '${{ matrix.binary_name }}' in 'whisper.cpp/build'"
+          exit 1
         fi
+        echo "Found binary at: $BINARY_PATH"
+        cp "$BINARY_PATH" staging/
+        
+        # Also copy any shared libraries if they exist
+        find whisper.cpp/build -type f \( -name "*.dll" -o -name "*.so" -o -name "*.dylib" \) -exec cp {} staging/ \;
+
 
     - name: Package binary
       working-directory: staging
