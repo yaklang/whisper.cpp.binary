@@ -45,16 +45,15 @@ jobs:
       working-directory: whisper.cpp
       shell: bash
       run: |
-        CMAKE_ARGS="-DWHISPER_BUILD_SHARED=OFF"
+        CMAKE_ARGS=""
         # For Apple Silicon, enable Metal for better performance
         if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
-          CMAKE_ARGS="$CMAKE_ARGS -DWHISPER_METAL=1"
+          CMAKE_ARGS="-DWHISPER_METAL=1"
         fi
-        # For Windows, also link the runtime statically to avoid vcruntime dependencies.
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          CMAKE_ARGS="$CMAKE_ARGS -DWHISPER_MSVC_RUNTIME=static"
+        # For all macOS builds, make binaries relocatable
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_MACOSX_RPATH=ON -DCMAKE_INSTALL_RPATH=@executable_path"
         fi
-        # The RPATH settings for macOS are no longer needed for a static build.
 
         # Configure
         echo "Using CMAKE_ARGS: $CMAKE_ARGS"
@@ -73,28 +72,30 @@ jobs:
       shell: bash
       run: |
         mkdir staging
+
+        # Copy the main executable
         SERVER_EXECUTABLE=$(find whisper.cpp/build -type f -name "${{ matrix.binary_name }}" | head -n 1)
         if [[ -z "$SERVER_EXECUTABLE" ]]; then
           echo "Error: Could not find server binary '${{ matrix.binary_name }}'"
           ls -R whisper.cpp/build
           exit 1
         fi
-        
-        BINARY_DIR=$(dirname "$SERVER_EXECUTABLE")
-        
-        echo "Found binary directory at: $BINARY_DIR"
-        echo "Copying all contents from binary directory to staging..."
-        cp -r "$BINARY_DIR"/* staging/
-        
+        echo "Copying server executable: $SERVER_EXECUTABLE"
+        cp "$SERVER_EXECUTABLE" staging/
+
+        # Find and copy any shared libraries (.so, .dylib, .dll) from the build directory
+        echo "Finding and copying shared libraries..."
+        find whisper.cpp/build -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -print -exec cp {} staging/ \;
+
         echo "Staging directory contents:"
-        ls -R staging
+        ls -lh staging
 
     - name: Package binary
       working-directory: staging
       shell: bash
       run: |
         echo "Files to be packaged:"
-        ls -la
+        ls -lh
         if [[ "${{ runner.os }}" == "Windows" ]]; then
           # The glob * should handle all files like .exe and .dll
           powershell -Command "Compress-Archive -Path * -DestinationPath '../${{ matrix.asset_name }}'"
