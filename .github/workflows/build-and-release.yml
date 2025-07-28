@@ -59,68 +59,6 @@ jobs:
         # Build
         cmake --build build --config Release -j
 
-    - name: Verify build
-      working-directory: whisper.cpp
-      shell: bash
-      run: |
-        # Find the server binary
-        SERVER_EXECUTABLE=$(find build -type f -name "${{ matrix.binary_name }}" | head -n 1)
-        if [[ -z "$SERVER_EXECUTABLE" ]]; then
-          echo "Error: Could not find server binary '${{ matrix.binary_name }}'"
-          ls -R build
-          exit 1
-        fi
-        echo "Server binary found at: $SERVER_EXECUTABLE"
-        chmod +x "$SERVER_EXECUTABLE"
-
-        # Download model
-        echo "Downloading model..."
-        mkdir -p models
-        curl -L -o models/ggml-tiny.bin https://yaklang.oss-accelerate.aliyuncs.com/gguf/whisper-tiny-q5.bin
-
-        # Start the server in the background
-        echo "Starting server..."
-        "$SERVER_EXECUTABLE" -m models/ggml-tiny.bin --port 8080 &
-        SERVER_PID=$!
-        sleep 5 # Give server time to start
-
-        # Check if server is running (cross-platform way)
-        if ! kill -0 $SERVER_PID 2>/dev/null; then
-            echo "Server failed to start!"
-            exit 1
-        fi
-        
-        # Select a sample file
-        SAMPLE_FILE="../samples/jfk.mp3"
-        if [ ! -f "$SAMPLE_FILE" ]; then
-            echo "Sample file not found at $SAMPLE_FILE. Listing samples directory:"
-            ls -R ../samples
-            exit 1
-        fi
-
-        # Send request using curl
-        echo "Sending transcription request for $SAMPLE_FILE..."
-        RESPONSE=$(curl --silent --request POST \
-          --url http://127.0.0.1:8080/inference \
-          --header 'Content-Type: multipart/form-data' \
-          --form "file=@$SAMPLE_FILE")
-
-        # Kill the server
-        kill $SERVER_PID
-        wait $SERVER_PID || true
-
-        # Validate the response
-        echo "Response from server: $RESPONSE"
-        # Extract transcription text using grep and cut for portability (no jq needed)
-        TRANSCRIPTION=$(echo "$RESPONSE" | grep -o '"text":"[^"]*"' | cut -d'"' -f4)
-        
-        if [ -z "$TRANSCRIPTION" ]; then
-          echo "Verification failed: Transcription is empty or not found in response."
-          exit 1
-        else
-          echo "Verification successful. Transcription: $TRANSCRIPTION"
-        fi
-
     - name: List build artifacts for debugging
       if: always()
       working-directory: whisper.cpp
@@ -152,12 +90,114 @@ jobs:
       working-directory: staging
       shell: bash
       run: |
+        echo "Files to be packaged:"
+        ls -la
         if [[ "${{ runner.os }}" == "Windows" ]]; then
           # The glob * should handle all files like .exe and .dll
           powershell -Command "Compress-Archive -Path * -DestinationPath '../${{ matrix.asset_name }}'"
+          echo "Windows package created: ${{ matrix.asset_name }}"
+          powershell -Command "Get-Content -Path '../${{ matrix.asset_name }}' | Select-Object -First 0; Write-Host 'Package size:'; (Get-Item '../${{ matrix.asset_name }}').Length"
         else
           # Zip all files in the current (staging) directory
           zip ../${{ matrix.asset_name }} *
+          echo "Linux/macOS package created: ${{ matrix.asset_name }}"
+          echo "Package contents:"
+          unzip -l ../${{ matrix.asset_name }}
+        fi
+        echo "Final package location: ../${{ matrix.asset_name }}"
+
+    - name: Verify Packaged Artifact
+      shell: bash
+      run: |
+        echo "--- Verifying packaged artifact ---"
+        
+        echo "Cleaning up build environment to ensure artifact is self-contained..."
+        rm -rf whisper.cpp
+        
+        echo "Creating temporary directory for verification..."
+        mkdir verification-dir
+        
+        echo "Unzipping artifact into verification directory..."
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          powershell -Command "Expand-Archive -Path '${{ matrix.asset_name }}' -DestinationPath 'verification-dir' -Force"
+        else
+          unzip ${{ matrix.asset_name }} -d verification-dir
+        fi
+        
+        # Run verification inside the unzipped directory
+        cd verification-dir
+        
+        echo "Contents of unzipped artifact:"
+        ls -R
+        
+        # Find the server binary in the current directory
+        SERVER_EXECUTABLE="./${{ matrix.binary_name }}"
+        if [[ ! -f "$SERVER_EXECUTABLE" ]]; then
+          echo "Error: Could not find server binary '${{ matrix.binary_name }}' in unzipped artifact"
+          exit 1
+        fi
+        echo "Server binary found at: $SERVER_EXECUTABLE"
+        chmod +x "$SERVER_EXECUTABLE"
+
+        # Download model
+        echo "Downloading model..."
+        mkdir -p models
+        curl -L -o models/ggml-tiny.bin https://yaklang.oss-accelerate.aliyuncs.com/gguf/whisper-tiny-q5.bin
+
+        # Start the server in the background
+        echo "Starting server from unzipped artifact..."
+        "$SERVER_EXECUTABLE" -m models/ggml-tiny.bin --port 8080 &
+        SERVER_PID=$!
+        
+        # Wait for the server to be ready on port 8080
+        echo "Waiting for server to start... (timeout in 60s)"
+        SECONDS=0
+        TIMEOUT=60
+        while true; do
+            curl -s http://127.0.0.1:8080 > /dev/null
+            if [[ $? -ne 7 ]]; then
+              echo "Server is listening on port 8080."
+              break
+            fi
+            if (( SECONDS > TIMEOUT )); then
+                echo "Timeout: Server failed to start within $TIMEOUT seconds."
+                kill $SERVER_PID
+                exit 1
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+                echo "Server process terminated unexpectedly."
+                exit 1
+            fi
+            sleep 1
+        done
+
+        # Select a sample file (path is relative to verification-dir)
+        SAMPLE_FILE="../../samples/jfk.mp3"
+        if [ ! -f "$SAMPLE_FILE" ]; then
+            echo "Sample file not found at $SAMPLE_FILE."
+            exit 1
+        fi
+
+        # Send request using curl
+        echo "Sending transcription request for $SAMPLE_FILE..."
+        RESPONSE=$(curl --silent --request POST \
+          --url http://127.0.0.1:8080/inference \
+          --header 'Content-Type: multipart/form-data' \
+          --form "file=@$SAMPLE_FILE")
+
+        # Kill the server
+        kill $SERVER_PID
+        wait $SERVER_PID || true
+
+        # Validate the response
+        echo "Response from server: $RESPONSE"
+        TRANSCRIPTION=$(echo "$RESPONSE" | grep -o '"text":"[^"]*"' | cut -d'"' -f4)
+        
+        if [ -z "$TRANSCRIPTION" ]; then
+          echo "Verification of packaged artifact FAILED: Transcription is empty."
+          exit 1
+        else
+          echo "Verification of packaged artifact SUCCESSFUL. Transcription: $TRANSCRIPTION"
         fi
 
     - name: Upload artifact
