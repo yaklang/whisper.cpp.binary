@@ -41,24 +41,18 @@ jobs:
     - name: Clone whisper.cpp repository
       run: git clone https://github.com/ggerganov/whisper.cpp.git
 
-    - name: Build on Linux/macOS
-      if: runner.os != 'Windows'
-      working-directory: whisper.cpp
-      run: |
-        if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
-          # Enable Metal for Apple Silicon for better performance
-          make clean
-          WHISPER_METAL=1 make server
-        else
-          make server
-        fi
-
-    - name: Build on Windows
-      if: runner.os == 'Windows'
+    - name: Build whisper.cpp
       working-directory: whisper.cpp
       shell: bash
       run: |
-        cmake -B build
+        CMAKE_ARGS=""
+        # For Apple Silicon, enable Metal for better performance
+        if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
+          CMAKE_ARGS="-DWHISPER_METAL=1"
+        fi
+        # Configure
+        cmake -B build $CMAKE_ARGS
+        # Build
         cmake --build build --config Release -j
 
     - name: Prepare artifact
@@ -68,7 +62,7 @@ jobs:
         if [[ "${{ runner.os }}" == "Windows" ]]; then
           cp whisper.cpp/build/bin/Release/server.exe staging/${{ matrix.binary_name }}
         else
-          cp whisper.cpp/server staging/${{ matrix.binary_name }}
+          cp whisper.cpp/build/bin/server staging/${{ matrix.binary_name }}
         fi
 
     - name: Package binary
