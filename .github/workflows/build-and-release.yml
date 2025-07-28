@@ -228,18 +228,18 @@ jobs:
         name: binary-${{ matrix.name }}
         path: ${{ matrix.asset_name }}
 
-  upload-to-oss:
-    name: Upload to OSS
+  package:
+    name: Package Release
     needs: build
     runs-on: ubuntu-latest
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
     steps:
-      - name: Download all build artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          path: artifacts
 
-      - name: List artifacts for debugging
+      - name: List downloaded files
         run: ls -R artifacts
 
       - name: Calculate SHA256 checksums
@@ -251,25 +251,34 @@ jobs:
       - name: List files to be uploaded
         run: ls -R artifacts
 
-      - name: Setup ossutil
-        uses: manyuanrong/setup-ossutil@v2.0
-        with:
-          endpoint: ${{ secrets.OSS_ENDPOINT }}
-          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      - name: Download Yak for uploading
+        run: |
+          wget -q -O './yak' https://yaklang.oss-accelerate.aliyuncs.com/yak/ci/yak_linux_amd64
+          chmod +x ./yak
 
       - name: Upload to OSS
+        env:
+          OSS_KEY_ID: ${{ secrets.OSS_KEY_ID }}
+          OSS_KEY_SECRET: ${{ secrets.OSS_KEY_SECRET }}
+          OSS_BUCKET: yaklang
+          OSS_ENDPOINT: oss-accelerate.aliyuncs.com
         run: |
-          DATE_FOLDER=$(date +%Y%m%d)
-          OSS_PATH="oss://${{ secrets.OSS_BUCKET }}/whisper.cpp/$DATE_FOLDER/"
-          
-          echo "Uploading files to $OSS_PATH"
-          
-          find artifacts -type f \( -name "*.zip" -o -name "*.sha256" \) | while read -r file; do
-            filename=$(basename "$file")
-            echo "Uploading $filename"
-            ossutil cp -f "$file" "$OSS_PATH$filename"
+          DATE=$(date +'%Y%m%d')
+          echo "Preparing to upload artifacts to /whisper.cpp/$DATE/"
+
+          find ./artifacts -type f \( -name "*.zip" -o -name "*.sha256" \) | while read -r file_path; do
+            if [ -f "$file_path" ]; then
+              filename=$(basename "$file_path")
+              remote_path="/whisper.cpp/$DATE/$filename"
+              echo "Uploading $file_path to oss://$OSS_BUCKET$remote_path"
+              ./yak upload-oss \
+                -b "$OSS_BUCKET" \
+                --endpoint "$OSS_ENDPOINT" \
+                -ak "$OSS_KEY_ID" \
+                -sk "$OSS_KEY_SECRET" \
+                -t 5 \
+                -f "$file_path:$remote_path"
+            else
+              echo "File not found: $file_path, skipping."
+            fi
           done
-          
-          echo "Listing remote files..."
-          ossutil ls "$OSS_PATH" 
