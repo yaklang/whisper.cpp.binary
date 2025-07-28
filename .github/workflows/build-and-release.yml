@@ -50,9 +50,12 @@ jobs:
         if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
           CMAKE_ARGS="-DWHISPER_METAL=1"
         fi
-        # For all macOS builds, make binaries relocatable
+        # Set RPATH so the executable can find shared libraries in its own directory
         if [[ "${{ runner.os }}" == "macOS" ]]; then
           CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_MACOSX_RPATH=ON -DCMAKE_INSTALL_RPATH=@executable_path"
+        elif [[ "${{ runner.os }}" == "Linux" ]]; then
+          # Use $ORIGIN for Linux to find libraries in the same directory as the executable
+          CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_INSTALL_RPATH='\$ORIGIN'"
         fi
 
         # Configure
@@ -73,19 +76,18 @@ jobs:
       run: |
         mkdir staging
 
-        # Copy the main executable
+        # Find the directory containing the main executable
         SERVER_EXECUTABLE=$(find whisper.cpp/build -type f -name "${{ matrix.binary_name }}" | head -n 1)
         if [[ -z "$SERVER_EXECUTABLE" ]]; then
           echo "Error: Could not find server binary '${{ matrix.binary_name }}'"
           ls -R whisper.cpp/build
           exit 1
         fi
-        echo "Copying server executable: $SERVER_EXECUTABLE"
-        cp "$SERVER_EXECUTABLE" staging/
-
-        # Find and copy any shared libraries (.so, .dylib, .dll) from the build directory
-        echo "Finding and copying shared libraries..."
-        find whisper.cpp/build -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -print -exec cp {} staging/ \;
+        BINARY_DIR=$(dirname "$SERVER_EXECUTABLE")
+        
+        echo "Found binary directory at: $BINARY_DIR"
+        echo "Copying all contents from binary directory to staging... (preserving symlinks)"
+        cp -a "$BINARY_DIR"/* staging/
 
         echo "Staging directory contents:"
         ls -lh staging
@@ -97,13 +99,13 @@ jobs:
         echo "Files to be packaged:"
         ls -lh
         if [[ "${{ runner.os }}" == "Windows" ]]; then
-          # The glob * should handle all files like .exe and .dll
+          # The glob * should handle all files like .e
           powershell -Command "Compress-Archive -Path * -DestinationPath '../${{ matrix.asset_name }}'"
           echo "Windows package created: ${{ matrix.asset_name }}"
           powershell -Command "Get-Content -Path '../${{ matrix.asset_name }}' | Select-Object -First 0; Write-Host 'Package size:'; (Get-Item '../${{ matrix.asset_name }}').Length"
         else
-          # Zip all files in the current (staging) directory
-          zip ../${{ matrix.asset_name }} *
+          # Zip all files in the current (staging) directory, preserving symlinks
+          zip --symlinks ../${{ matrix.asset_name }} *
           echo "Linux/macOS package created: ${{ matrix.asset_name }}"
           echo "Package contents:"
           unzip -l ../${{ matrix.asset_name }}
@@ -176,7 +178,7 @@ jobs:
         done
 
         # Select a sample file (path is relative to verification-dir)
-        SAMPLE_FILE="../../samples/jfk.mp3"
+        SAMPLE_FILE="$GITHUB_WORKSPACE/samples/jfk.mp3"
         if [ ! -f "$SAMPLE_FILE" ]; then
             echo "Sample file not found at $SAMPLE_FILE."
             exit 1
