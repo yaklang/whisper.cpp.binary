@@ -1,0 +1,115 @@
+name: Build and Release whisper-server
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build for ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            name: linux-amd64
+            binary_name: whisper-server
+            asset_name: whisper.cpp-linux-amd64.zip
+          - os: windows-latest
+            arch: x64
+            name: windows-amd64
+            binary_name: whisper-server.exe
+            asset_name: whisper.cpp-windows-amd64.zip
+          - os: macos-latest
+            arch: x64
+            name: macos-amd64
+            binary_name: whisper-server
+            asset_name: whisper.cpp-macos-amd64.zip
+          - os: macos-14 # Apple Silicon (M1/M2) runner
+            arch: arm64
+            name: macos-arm64
+            binary_name: whisper-server
+            asset_name: whisper.cpp-macos-arm64.zip
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Clone whisper.cpp repository
+      run: git clone https://github.com/ggerganov/whisper.cpp.git
+
+    - name: Build on Linux/macOS
+      if: runner.os != 'Windows'
+      working-directory: whisper.cpp
+      run: |
+        if [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
+          # Enable Metal for Apple Silicon for better performance
+          make clean
+          WHISPER_METAL=1 make server
+        else
+          make server
+        fi
+
+    - name: Build on Windows
+      if: runner.os == 'Windows'
+      working-directory: whisper.cpp
+      shell: bash
+      run: |
+        cmake -B build
+        cmake --build build --config Release -j
+
+    - name: Prepare artifact
+      shell: bash
+      run: |
+        mkdir staging
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          cp whisper.cpp/build/bin/Release/server.exe staging/${{ matrix.binary_name }}
+        else
+          cp whisper.cpp/server staging/${{ matrix.binary_name }}
+        fi
+
+    - name: Package binary
+      working-directory: staging
+      shell: bash
+      run: |
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          powershell -Command "Compress-Archive -Path '${{ matrix.binary_name }}' -DestinationPath '../${{ matrix.asset_name }}'"
+        else
+          zip ../${{ matrix.asset_name }} ${{ matrix.binary_name }}
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: binary-${{ matrix.name }}
+        path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: List artifacts
+      run: ls -R artifacts
+
+    - name: Create Release and Upload Assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        TAG_NAME="release-$(date +%Y%m%d-%H%M%S)"
+        gh release create "$TAG_NAME" \
+          --title "whisper-server binaries $TAG_NAME" \
+          --notes "Automated release of whisper-server binaries for various platforms." \
+          artifacts/*/*.zip 
