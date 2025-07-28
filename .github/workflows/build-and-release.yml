@@ -59,6 +59,68 @@ jobs:
         # Build
         cmake --build build --config Release -j
 
+    - name: Verify build
+      working-directory: whisper.cpp
+      shell: bash
+      run: |
+        # Find the server binary
+        SERVER_EXECUTABLE=$(find build -type f -name "${{ matrix.binary_name }}" | head -n 1)
+        if [[ -z "$SERVER_EXECUTABLE" ]]; then
+          echo "Error: Could not find server binary '${{ matrix.binary_name }}'"
+          ls -R build
+          exit 1
+        fi
+        echo "Server binary found at: $SERVER_EXECUTABLE"
+        chmod +x "$SERVER_EXECUTABLE"
+
+        # Download model
+        echo "Downloading model..."
+        mkdir -p models
+        curl -L -o models/ggml-tiny.bin https://yaklang.oss-accelerate.aliyuncs.com/gguf/whisper-tiny-q5.bin
+
+        # Start the server in the background
+        echo "Starting server..."
+        "$SERVER_EXECUTABLE" -m models/ggml-tiny.bin --port 8080 &
+        SERVER_PID=$!
+        sleep 5 # Give server time to start
+
+        # Check if server is running (cross-platform way)
+        if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo "Server failed to start!"
+            exit 1
+        fi
+        
+        # Select a sample file
+        SAMPLE_FILE="../samples/jfk.wav"
+        if [ ! -f "$SAMPLE_FILE" ]; then
+            echo "Sample file not found at $SAMPLE_FILE. Listing samples directory:"
+            ls -R ../samples
+            exit 1
+        fi
+
+        # Send request using curl
+        echo "Sending transcription request for $SAMPLE_FILE..."
+        RESPONSE=$(curl --silent --request POST \
+          --url http://127.0.0.1:8080/inference \
+          --header 'Content-Type: multipart/form-data' \
+          --form "file=@$SAMPLE_FILE")
+
+        # Kill the server
+        kill $SERVER_PID
+        wait $SERVER_PID || true
+
+        # Validate the response
+        echo "Response from server: $RESPONSE"
+        # Extract transcription text using grep and cut for portability (no jq needed)
+        TRANSCRIPTION=$(echo "$RESPONSE" | grep -o '"text":"[^"]*"' | cut -d'"' -f4)
+        
+        if [ -z "$TRANSCRIPTION" ]; then
+          echo "Verification failed: Transcription is empty or not found in response."
+          exit 1
+        else
+          echo "Verification successful. Transcription: $TRANSCRIPTION"
+        fi
+
     - name: List build artifacts for debugging
       if: always()
       working-directory: whisper.cpp
@@ -70,17 +132,21 @@ jobs:
       shell: bash
       run: |
         mkdir staging
-        BINARY_PATH=$(find whisper.cpp/build -type f -name "${{ matrix.binary_name }}")
-        if [[ -z "$BINARY_PATH" ]]; then
-          echo "Error: Could not find binary '${{ matrix.binary_name }}' in 'whisper.cpp/build'"
+        SERVER_EXECUTABLE=$(find whisper.cpp/build -type f -name "${{ matrix.binary_name }}" | head -n 1)
+        if [[ -z "$SERVER_EXECUTABLE" ]]; then
+          echo "Error: Could not find server binary '${{ matrix.binary_name }}'"
+          ls -R whisper.cpp/build
           exit 1
         fi
-        echo "Found binary at: $BINARY_PATH"
-        cp "$BINARY_PATH" staging/
         
-        # Also copy any shared libraries if they exist
-        find whisper.cpp/build -type f \( -name "*.dll" -o -name "*.so" -o -name "*.dylib" \) -exec cp {} staging/ \;
-
+        BINARY_DIR=$(dirname "$SERVER_EXECUTABLE")
+        
+        echo "Found binary directory at: $BINARY_DIR"
+        echo "Copying all contents from binary directory to staging..."
+        cp -r "$BINARY_DIR"/* staging/
+        
+        echo "Staging directory contents:"
+        ls -R staging
 
     - name: Package binary
       working-directory: staging
