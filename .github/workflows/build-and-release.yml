@@ -91,6 +91,31 @@ jobs:
         echo "Copying server executable: $SERVER_EXECUTABLE"
         cp "$SERVER_EXECUTABLE" staging/
 
+        # Copy whisper-cli and rename it
+        CLI_EXECUTABLE_SRC_NAME="main"
+        CLI_EXECUTABLE_DEST_NAME="whisper-cli"
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          CLI_EXECUTABLE_SRC_NAME="main.exe"
+          CLI_EXECUTABLE_DEST_NAME="whisper-cli.exe"
+        fi
+        CLI_EXECUTABLE=$(find whisper.cpp/build -type f -name "$CLI_EXECUTABLE_SRC_NAME" | head -n 1)
+        if [[ -z "$CLI_EXECUTABLE" ]]; then
+          echo "Error: Could not find whisper-cli binary '$CLI_EXECUTABLE_SRC_NAME'"
+          ls -R whisper.cpp/build
+          exit 1
+        fi
+        echo "Copying whisper-cli executable: $CLI_EXECUTABLE as $CLI_EXECUTABLE_DEST_NAME"
+        cp "$CLI_EXECUTABLE" "staging/$CLI_EXECUTABLE_DEST_NAME"
+        
+        # Copy VAD model
+        VAD_MODEL="silero-vad-v5.1.2.bin"
+        if [[ -f "$VAD_MODEL" ]]; then
+            echo "Copying VAD model: $VAD_MODEL"
+            cp "$VAD_MODEL" staging/
+        else
+            echo "Warning: VAD model '$VAD_MODEL' not found. Skipping."
+        fi
+
         # Find and copy any shared libraries and their symlinks from the entire build directory
         echo "Finding and copying shared libraries (including symlinks)..."
         find whisper.cpp/build \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" -o -name "*.dll" \) \( -type f -o -type l \) -print -exec cp -a {} staging/ \;
