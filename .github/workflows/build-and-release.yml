@@ -179,7 +179,7 @@ jobs:
         # Download model
         echo "Downloading model..."
         mkdir -p models
-        curl -L -o models/ggml-tiny.bin https://yaklang.oss-accelerate.aliyuncs.com/gguf/whisper-tiny-q5.bin
+        curl -L -o models/ggml-tiny.bin https://yaklang.oss-accelerate.aliyuncs.com/gguf/whisper-tiny-q5.gguf
 
         # Start the server in the background
         echo "Starting server from unzipped artifact..."
