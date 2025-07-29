@@ -91,12 +91,10 @@ jobs:
         echo "Copying server executable: $SERVER_EXECUTABLE"
         cp "$SERVER_EXECUTABLE" staging/
 
-        # Copy whisper-cli and rename it
-        CLI_EXECUTABLE_SRC_NAME="main"
-        CLI_EXECUTABLE_DEST_NAME="whisper-cli"
+        # Copy whisper-cli
+        CLI_EXECUTABLE_SRC_NAME="whisper-cli"
         if [[ "${{ runner.os }}" == "Windows" ]]; then
-          CLI_EXECUTABLE_SRC_NAME="main.exe"
-          CLI_EXECUTABLE_DEST_NAME="whisper-cli.exe"
+          CLI_EXECUTABLE_SRC_NAME="whisper-cli.exe"
         fi
         CLI_EXECUTABLE=$(find whisper.cpp/build -type f -name "$CLI_EXECUTABLE_SRC_NAME" | head -n 1)
         if [[ -z "$CLI_EXECUTABLE" ]]; then
@@ -104,9 +102,9 @@ jobs:
           ls -R whisper.cpp/build
           exit 1
         fi
-        echo "Copying whisper-cli executable: $CLI_EXECUTABLE as $CLI_EXECUTABLE_DEST_NAME"
-        cp "$CLI_EXECUTABLE" "staging/$CLI_EXECUTABLE_DEST_NAME"
-        
+        echo "Copying whisper-cli executable: $CLI_EXECUTABLE"
+        cp "$CLI_EXECUTABLE" staging/
+
         # Copy VAD model
         VAD_MODEL="silero-vad-v5.1.2.bin"
         if [[ -f "$VAD_MODEL" ]]; then
